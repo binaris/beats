@@ -1,7 +1,6 @@
 package kinesis
 
 import (
-	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/kinesis"
@@ -13,11 +12,6 @@ import (
 	"github.com/elastic/beats/libbeat/publisher"
 )
 
-var (
-	stream = "adam-test-stream"
-	region = "eu-central-1"
-)
-
 func init() {
 	outputs.RegisterType("kinesis", makeKinesis)
 }
@@ -25,8 +19,9 @@ func init() {
 type kinesisOutput struct {
 	beat     beat.Info
 	observer outputs.Observer
-	rotator  logp.FileRotator
 	codec    codec.Codec
+	stream   string
+	region   string
 }
 
 // New instantiates a new kinesis output instance.
@@ -43,24 +38,18 @@ func makeKinesis(
 	// disable bulk support in publisher pipeline
 	cfg.SetInt("bulk_max_size", -1, -1)
 
-	fo := &kinesisOutput{beat: beat, observer: observer}
-	if err := fo.init(beat, config); err != nil {
+	ko := &kinesisOutput{beat: beat, observer: observer}
+	if err := ko.init(beat, config); err != nil {
 		return outputs.Fail(err)
 	}
 
-	return outputs.Success(-1, 0, fo)
+	return outputs.Success(-1, 0, ko)
 }
 
 func (out *kinesisOutput) init(beat beat.Info, config config) error {
 	var err error
-
-
-
-	out.rotator.Path = config.Path
-	out.rotator.Name = config.Filename
-	if out.rotator.Name == "" {
-		out.rotator.Name = out.beat.Beat
-	}
+	out.stream = config.Stream
+	out.region = config.Region
 
 	enc, err := codec.CreateEncoder(beat, config.Codec)
 	if err != nil {
@@ -69,29 +58,7 @@ func (out *kinesisOutput) init(beat beat.Info, config config) error {
 
 	out.codec = enc
 
-	logp.Info("File output path set to: %v", out.rotator.Path)
-	logp.Info("File output base filename set to: %v", out.rotator.Name)
-
-	logp.Info("File output permissions set to: %#o", config.Permissions)
-	out.rotator.Permissions = &config.Permissions
-
-	rotateeverybytes := uint64(config.RotateEveryKb) * 1024
-	logp.Info("Rotate every bytes set to: %v", rotateeverybytes)
-	out.rotator.RotateEveryBytes = &rotateeverybytes
-
-	keepfiles := config.NumberOfFiles
-	logp.Info("Number of files set to: %v", keepfiles)
-	out.rotator.KeepFiles = &keepfiles
-
-	err = out.rotator.CreateDirectory()
-	if err != nil {
-		return err
-	}
-
-	err = out.rotator.CheckIfConfigSane()
-	if err != nil {
-		return err
-	}
+    logp.Info("Using stream %v in region %v", out.stream, out.region)
 
 	return nil
 }
@@ -116,11 +83,12 @@ func (out *kinesisOutput) Publish(
 		event := &events[i]
 		serializedEvent, err := out.codec.Encode(out.beat.Beat, &event.Content)
 
-        s := session.New(&aws.Config{Region: aws.String(region)})
-        kc := kinesis.New(s)
+		awsSession := session.New(&aws.Config{Region: aws.String(out.region)})
+		kc := kinesis.New(awsSession)
 
-        streamName := aws.String(stream)
-        streams, err := kc.DescribeStream(&kinesis.DescribeStreamInput{StreamName: streamName})
+		streamName := aws.String(out.stream)
+		streams, err := kc.DescribeStream(&kinesis.DescribeStreamInput{StreamName: streamName})
+        logp.Info("Available Streams: %v\n", streams)
 
 		entries := make([]*kinesis.PutRecordsRequestEntry, 1)
 		for i := 0; i < len(entries); i++ {
@@ -129,35 +97,21 @@ func (out *kinesisOutput) Publish(
 				PartitionKey: aws.String("key2"),
 			}
 		}
-        putsOutput, err := kc.PutRecords(&kinesis.PutRecordsInput{
-            Records:    entries,
-            StreamName: streamName,
-        })
-        if err != nil {
-            panic(err)
-        }
-        // putsOutput has Records, and its shard id and sequece enumber.
-        fmt.Printf("%v\n", putsOutput)
+		putsOutput, err := kc.PutRecords(&kinesis.PutRecordsInput{
+			Records:    entries,
+			StreamName: streamName,
+		})
+		if err != nil {
+			panic(err)
+		}
+		// putsOutput has Records, and its shard id and sequece enumber.
+		logp.Info("%v\n", putsOutput)
 
 		if err != nil {
 			if event.Guaranteed() {
 				logp.Critical("Failed to serialize the event: %v", err)
 			} else {
 				logp.Warn("Failed to serialize the event: %v", err)
-			}
-
-			dropped++
-			continue
-		}
-
-		err = out.rotator.WriteLine(serializedEvent)
-		if err != nil {
-			st.WriteError(err)
-
-			if event.Guaranteed() {
-				logp.Critical("Writing event to file failed with: %v", err)
-			} else {
-				logp.Warn("Writing event to file failed with: %v", err)
 			}
 
 			dropped++

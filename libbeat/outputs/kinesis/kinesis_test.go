@@ -1,3 +1,3 @@
 // +build !integration
 
-package kinesis 
+package kinesis
