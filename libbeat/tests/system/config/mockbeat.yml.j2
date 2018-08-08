@@ -73,10 +73,21 @@ setup.template:
     index.codec: best_compression
   name: {{ es_template_name }}
   pattern: {{ es_template_pattern }}
+  overwrite: {{ template_overwrite|default("false") }}
+  json:
+    enabled: {{ template_json_enabled|default("false") }}
+    path: {{ template_json_path }}
+    name: {{ template_json_name }}
+
 #================================ Logging =====================================
 
 {% if metrics_period -%}
 logging.metrics.period: {{ metrics_period }}
 {%- endif %}
+
+{% if keystore_path %}
+#================================ keystore =====================================
+keystore.path: {{keystore_path}}
+{% endif %}
 
 # vim: set ft=jinja:

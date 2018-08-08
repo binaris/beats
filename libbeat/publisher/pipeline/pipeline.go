@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // Package pipeline combines all publisher functionality (processors, queue,
 // outputs) to create instances of complete publisher pipelines, beats can
 // connect to publish events to.
@@ -22,7 +39,7 @@ import (
 // Pipeline implementation providint all beats publisher functionality.
 // The pipeline consists of clients, processors, a central queue, an output
 // controller and the actual outputs.
-// The queue implementing the queue.Queue interface is the most entral entity
+// The queue implementing the queue.Queue interface is the most central entity
 // to the pipeline, providing support for pushung, batching and pulling events.
 // The pipeline adds different ACKing strategies and wait close support on top
 // of the queue. For handling ACKs, the pipeline keeps track of filtered out events,
@@ -62,13 +79,14 @@ type pipelineProcessors struct {
 	// The pipeline its processor settings for
 	// constructing the clients complete processor
 	// pipeline on connect.
-	beatsMeta common.MapStr
-	fields    common.MapStr
-	tags      []string
+	builtinMeta common.MapStr
+	fields      common.MapStr
+	tags        []string
 
 	processors beat.Processor
 
-	disabled bool // disabled is set if outputs have been disabled via CLI
+	disabled   bool // disabled is set if outputs have been disabled via CLI
+	alwaysCopy bool
 }
 
 // Settings is used to pass additional settings to a newly created pipeline instance.
@@ -90,8 +108,8 @@ type Settings struct {
 // processors, so all processors configured with the pipeline or client will see
 // the same/complete event.
 type Annotations struct {
-	Beat  common.MapStr
-	Event common.EventMetadata
+	Event   common.EventMetadata
+	Builtin common.MapStr
 }
 
 // WaitCloseMode enumerates the possible behaviors of WaitClose in a pipeline.
@@ -140,7 +158,7 @@ func New(
 ) (*Pipeline, error) {
 	var err error
 
-	log := defaultLogger
+	log := logp.NewLogger("publish")
 	annotations := settings.Annotations
 	processors := settings.Processors
 	disabledOutput := settings.Disabled
@@ -172,7 +190,18 @@ func New(
 	if err != nil {
 		return nil, err
 	}
-	p.eventSema = newSema(p.queue.BufferConfig().Events)
+
+	if count := p.queue.BufferConfig().Events; count > 0 {
+		p.eventSema = newSema(count)
+	}
+
+	maxEvents := p.queue.BufferConfig().Events
+	if maxEvents <= 0 {
+		// Maximum number of events until acker starts blocking.
+		// Only active if pipeline can drop events.
+		maxEvents = 64000
+	}
+	p.eventSema = newSema(maxEvents)
 
 	p.output = newOutputController(log, p.observer, p.queue)
 	p.output.Set(out)
@@ -253,7 +282,7 @@ func (p *Pipeline) Close() error {
 	// shutdown queue
 	err := p.queue.Close()
 	if err != nil {
-		log.Err("pipeline queue shutdown error: ", err)
+		log.Error("pipeline queue shutdown error: ", err)
 	}
 
 	p.observer.cleanup()
@@ -304,8 +333,7 @@ func (p *Pipeline) ConnectWith(cfg beat.ClientConfig) (beat.Client, error) {
 		}
 	}
 
-	processors := p.newProcessorPipeline(cfg)
-
+	processors := newProcessorPipeline(p.beatInfo, p.processors, cfg)
 	acker := p.makeACKer(processors != nil, &cfg, waitClose)
 	producerCfg := queue.ProducerConfig{
 		// Cancel events from queue if acker is configured
@@ -390,8 +418,8 @@ func makePipelineProcessors(
 		p.processors = tmp
 	}
 
-	if meta := annotations.Beat; meta != nil {
-		p.beatsMeta = common.MapStr{"beat": meta}
+	if meta := annotations.Builtin; meta != nil {
+		p.builtinMeta = meta
 	}
 
 	if em := annotations.Event; len(em.Fields) > 0 {

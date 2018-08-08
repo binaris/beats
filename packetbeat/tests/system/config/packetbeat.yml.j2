@@ -81,6 +81,7 @@ packetbeat.protocols:
   ]
 {%- endif %}
 {%- if http_max_message_size %}  max_message_size: {{ http_max_message_size }} {%- endif %}
+{%- if http_transaction_timeout %}  transaction_timeout: {{ http_transaction_timeout }} {%- endif %}
 
 - type: memcache
   ports: [{{ memcache_ports|default([11211])|join(", ") }}]
@@ -205,9 +206,15 @@ queue.mem:
 # Configure what outputs to use when sending the data collected by the beat.
 # Multiple outputs may be used.
 
+{%- if elasticsearch %}
+#------------------------------- Elasticsearch output ----------------------------
+output.elasticsearch:
+  hosts: ["{{ elasticsearch.host }}"]
+{%- else %}
 #------------------------------- File output ----------------------------------
 output.file:
   path: {{ output_file_path|default(beat.working_dir + "/output") }}
   filename: "{{ output_file_filename|default("packetbeat") }}"
-  rotate_every_kb: 1000
+  rotate_every_kb: {{ rotate_every_kb | default(1000) }}
   #number_of_files: 7
+{%- endif %}

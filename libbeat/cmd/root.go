@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package cmd
 
 import (
@@ -32,6 +49,7 @@ type BeatsRootCmd struct {
 	CompletionCmd *cobra.Command
 	ExportCmd     *cobra.Command
 	TestCmd       *cobra.Command
+	KeystoreCmd   *cobra.Command
 }
 
 // GenRootCmd returns the root command to use for your beat. It takes
@@ -67,6 +85,7 @@ func GenRootCmdWithIndexPrefixWithRunFlags(name, indexPrefix, version string, be
 	rootCmd.CompletionCmd = genCompletionCmd(name, version, rootCmd)
 	rootCmd.ExportCmd = genExportCmd(name, indexPrefix, version)
 	rootCmd.TestCmd = genTestCmd(name, version, beatCreator)
+	rootCmd.KeystoreCmd = genKeystoreCmd(name, indexPrefix, version, runFlags)
 
 	// Root command is an alias for run
 	rootCmd.Run = rootCmd.RunCmd.Run
@@ -97,6 +116,7 @@ func GenRootCmdWithIndexPrefixWithRunFlags(name, indexPrefix, version string, be
 	rootCmd.AddCommand(rootCmd.CompletionCmd)
 	rootCmd.AddCommand(rootCmd.ExportCmd)
 	rootCmd.AddCommand(rootCmd.TestCmd)
+	rootCmd.AddCommand(rootCmd.KeystoreCmd)
 
 	return rootCmd
 }

@@ -3,7 +3,8 @@
   description: >
     Stats collected from Prometheus.
   short_config: false
-  release: beta
+  release: ga
+  settings: ["ssl"]
   fields:
     - name: prometheus
       type: group

@@ -1,13 +1,12 @@
 import os
 import metricbeat
 import unittest
+import time
 
 
 class Test(metricbeat.BaseTest):
 
     COMPOSE_SERVICES = ['logstash']
-
-    COMPOSE_TIMEOUT = 120
 
     @unittest.skipUnless(metricbeat.INTEGRATION_TESTS, "integration test")
     def test_node(self):
@@ -33,7 +32,7 @@ class Test(metricbeat.BaseTest):
         self.assert_fields_are_documented(evt)
 
     @unittest.skipUnless(metricbeat.INTEGRATION_TESTS, "integration test")
-    def test_node(self):
+    def test_node_stats(self):
         """
         logstash node_stats metricset test
         """

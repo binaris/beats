@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package mb
 
 import (
@@ -38,30 +55,44 @@ type MetricSetFactory func(base BaseMetricSet) (MetricSet, error)
 // An error should be returned if the host or configuration is invalid.
 type HostParser func(module Module, host string) (HostData, error)
 
-type metricSetFactoryInfo struct {
-	name       string
-	factory    MetricSetFactory
-	hostParser HostParser
-	isDefault  bool
+// MetricSetRegistration contains the parameters that were used to register
+// a MetricSet.
+type MetricSetRegistration struct {
+	Name    string
+	Factory MetricSetFactory
+
+	// Options
+	IsDefault  bool
+	HostParser HostParser
+	Namespace  string
 }
 
 // MetricSetOption sets an option for a MetricSetFactory that is being
 // registered.
-type MetricSetOption func(info *metricSetFactoryInfo)
+type MetricSetOption func(info *MetricSetRegistration)
 
 // WithHostParser specifies the HostParser that should be used with the
 // MetricSet.
 func WithHostParser(p HostParser) MetricSetOption {
-	return func(i *metricSetFactoryInfo) {
-		i.hostParser = p
+	return func(r *MetricSetRegistration) {
+		r.HostParser = p
 	}
 }
 
 // DefaultMetricSet specifies that the MetricSetFactory will be the default
 // when no MetricSet names are specified in the configuration.
 func DefaultMetricSet() MetricSetOption {
-	return func(i *metricSetFactoryInfo) {
-		i.isDefault = true
+	return func(r *MetricSetRegistration) {
+		r.IsDefault = true
+	}
+}
+
+// WithNamespace specifies the fully qualified namespace under which MetricSet
+// data will be added. If no namespace is specified then [module].[metricset]
+// will be used.
+func WithNamespace(namespace string) MetricSetOption {
+	return func(r *MetricSetRegistration) {
+		r.Namespace = namespace
 	}
 }
 
@@ -72,15 +103,15 @@ type Register struct {
 	lock sync.RWMutex
 	// A map of module name to ModuleFactory.
 	modules map[string]ModuleFactory
-	// A map of module name to nested map of MetricSet name to metricSetFactoryInfo.
-	metricSets map[string]map[string]metricSetFactoryInfo
+	// A map of module name to nested map of MetricSet name to MetricSetRegistration.
+	metricSets map[string]map[string]MetricSetRegistration
 }
 
 // NewRegister creates and returns a new Register.
 func NewRegister() *Register {
 	return &Register{
 		modules:    make(map[string]ModuleFactory, initialSize),
-		metricSets: make(map[string]map[string]metricSetFactoryInfo, initialSize),
+		metricSets: make(map[string]map[string]MetricSetRegistration, initialSize),
 	}
 }
 
@@ -152,7 +183,7 @@ func (r *Register) addMetricSet(module, name string, factory MetricSetFactory, o
 	name = strings.ToLower(name)
 
 	if metricsets, ok := r.metricSets[module]; !ok {
-		r.metricSets[module] = map[string]metricSetFactoryInfo{}
+		r.metricSets[module] = map[string]MetricSetRegistration{}
 	} else if _, exists := metricsets[name]; exists {
 		return fmt.Errorf("metricset '%s/%s' is already registered", module, name)
 	}
@@ -162,7 +193,7 @@ func (r *Register) addMetricSet(module, name string, factory MetricSetFactory, o
 	}
 
 	// Set the options.
-	msInfo := metricSetFactoryInfo{name: name, factory: factory}
+	msInfo := MetricSetRegistration{Name: name, Factory: factory}
 	for _, opt := range options {
 		opt(&msInfo)
 	}
@@ -181,9 +212,9 @@ func (r *Register) moduleFactory(name string) ModuleFactory {
 	return r.modules[strings.ToLower(name)]
 }
 
-// metricSetFactory returns the registered MetricSetFactory associated with the
-// given name. It returns an error if no MetricSetFactory is registered.
-func (r *Register) metricSetFactory(module, name string) (MetricSetFactory, HostParser, error) {
+// metricSetRegistration returns the registration data associated with the given
+// metricset name. It returns an error if no metricset is registered.
+func (r *Register) metricSetRegistration(module, name string) (MetricSetRegistration, error) {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
 
@@ -192,21 +223,21 @@ func (r *Register) metricSetFactory(module, name string) (MetricSetFactory, Host
 
 	metricSets, exists := r.metricSets[module]
 	if !exists {
-		return nil, nil, fmt.Errorf("metricset '%s/%s' is not registered, module not found", module, name)
+		return MetricSetRegistration{}, fmt.Errorf("metricset '%s/%s' is not registered, module not found", module, name)
 	}
 
-	info, exists := metricSets[name]
+	registration, exists := metricSets[name]
 	if !exists {
-		return nil, nil, fmt.Errorf("metricset '%s/%s' is not registered, metricset not found", module, name)
+		return MetricSetRegistration{}, fmt.Errorf("metricset '%s/%s' is not registered, metricset not found", module, name)
 	}
 
-	return info.factory, info.hostParser, nil
+	return registration, nil
 }
 
-// defaultMetricSets returns the names of the default MetricSets for a module.
+// DefaultMetricSets returns the names of the default MetricSets for a module.
 // An error is returned if no default MetricSet is declared or the module does
 // not exist.
-func (r *Register) defaultMetricSets(module string) ([]string, error) {
+func (r *Register) DefaultMetricSets(module string) ([]string, error) {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
 
@@ -218,9 +249,9 @@ func (r *Register) defaultMetricSets(module string) ([]string, error) {
 	}
 
 	var defaults []string
-	for _, info := range metricSets {
-		if info.isDefault {
-			defaults = append(defaults, info.name)
+	for _, reg := range metricSets {
+		if reg.IsDefault {
+			defaults = append(defaults, reg.Name)
 		}
 	}
 

@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // +build !integration
 
 package fileset
@@ -30,7 +47,7 @@ func TestLoadManifestNginx(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, manifest.ModuleVersion, "1.0")
 	assert.Equal(t, manifest.IngestPipeline, "ingest/default.json")
-	assert.Equal(t, manifest.Prospector, "config/nginx-access.yml")
+	assert.Equal(t, manifest.Input, "config/nginx-access.yml")
 
 	vars := manifest.Vars
 	assert.Equal(t, "paths", vars[0]["name"])
@@ -145,11 +162,11 @@ func TestResolveVariable(t *testing.T) {
 	}
 }
 
-func TestGetProspectorConfigNginx(t *testing.T) {
+func TestGetInputConfigNginx(t *testing.T) {
 	fs := getModuleForTesting(t, "nginx", "access")
 	assert.NoError(t, fs.Read("5.2.0"))
 
-	cfg, err := fs.getProspectorConfig()
+	cfg, err := fs.getInputConfig()
 	assert.NoError(t, err)
 
 	assert.True(t, cfg.HasField("paths"))
@@ -160,11 +177,11 @@ func TestGetProspectorConfigNginx(t *testing.T) {
 	assert.Equal(t, "filebeat-5.2.0-nginx-access-default", pipelineID)
 }
 
-func TestGetProspectorConfigNginxOverrides(t *testing.T) {
+func TestGetInputConfigNginxOverrides(t *testing.T) {
 	modulesPath, err := filepath.Abs("../module")
 	assert.NoError(t, err)
 	fs, err := New(modulesPath, "access", &ModuleConfig{Module: "nginx"}, &FilesetConfig{
-		Prospector: map[string]interface{}{
+		Input: map[string]interface{}{
 			"close_eof": true,
 		},
 	})
@@ -172,7 +189,7 @@ func TestGetProspectorConfigNginxOverrides(t *testing.T) {
 
 	assert.NoError(t, fs.Read("5.2.0"))
 
-	cfg, err := fs.getProspectorConfig()
+	cfg, err := fs.getInputConfig()
 	assert.NoError(t, err)
 
 	assert.True(t, cfg.HasField("paths"))
@@ -204,9 +221,7 @@ func TestGetPipelineNginx(t *testing.T) {
 }
 
 func TestGetPipelineConvertTS(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"fileset", "modules"})
-	}
+	logp.TestingSetup(logp.WithSelectors("fileset", "modules"))
 
 	// load system/syslog
 	modulesPath, err := filepath.Abs("../module")

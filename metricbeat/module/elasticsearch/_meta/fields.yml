@@ -3,6 +3,7 @@
   description: >
     Elasticsearch module
   release: beta
+  settings: ["ssl"]
   short_config: false
   fields:
     - name: elasticsearch
@@ -13,3 +14,13 @@
           type: keyword
           description: >
             Elasticsearch cluster name.
+
+        - name: cluster.id
+          type: keyword
+          description: >
+            Elasticsearch cluster id.
+
+        - name: cluster.state.id
+          type: keyword
+          description: >
+            Elasticsearch state id.

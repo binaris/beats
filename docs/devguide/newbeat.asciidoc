@@ -41,17 +41,16 @@ For general information about contributing to Beats, see <<beats-contributing>>.
 
 After you have https://golang.org/doc/install[installed Go] and set up the
 https://golang.org/doc/code.html#GOPATH[GOPATH] environment variable to point to
-your preferred workspace location, a simple way of getting the source code for
-Beats, including libbeat and the Beat generator, is to do:
+your preferred workspace location, clone the Beats repository in the correct location
+under `GOPATH`:
 
 [source,shell]
 ----------------------------------------------------------------------
-go get github.com/elastic/beats
+mkdir -p ${GOPATH}/src/github.com/elastic
+git clone https://github.com/elastic/beats ${GOPATH}/src/github.com/elastic/beats
 ----------------------------------------------------------------------
 
-When you run the command, all source files are downloaded to the
-`$GOPATH/src/github.com/elastic/beats` path. You can ignore the "no buildable Go source files" message because
-you will build the source later. By default `go get`  fetches the master branch. To build your beat
+To build your beat
 on a specific version of libbeat, check out the specific branch ({doc-branch} in the example below):
 
 ["source","sh",subs="attributes"]
@@ -138,6 +137,8 @@ cd ${GOPATH}/src/github.com/{user}
 
 Run python and specify the path to the Beat generator:
 
+NOTE: Python 2 is required (Python 3 will not work).
+
 [source,shell]
 --------------------
 python $GOPATH/src/github.com/elastic/beats/script/generate.py
@@ -154,7 +155,7 @@ beat_path [github.com/{github id}]:
 full_name [Firstname Lastname]: {Full Name}
 ---------
 
-The Beat generator creates a directory called `countbeat` inside of your project folder.
+The Beat generator creates a directory called `countbeat` inside of your project folder (e.g. {project folder}/github.com/{github id}/countbeat).
 
 You now have a raw template of the Beat, but you still need to <<setting-up-beat,fetch dependencies and set up the Beat>>.
 
@@ -474,9 +475,9 @@ package main
 
 import (
 	"os"
-	"github.com/spf13/cobra"
 
 	"github.com/elastic/beats/libbeat/beat"
+	"github.com/elastic/beats/libbeat/cmd"
 
 	"github.com/kimjmin/countbeat/beater"
 )

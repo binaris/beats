@@ -19,7 +19,7 @@ By deploying Filebeat as a https://kubernetes.io/docs/concepts/workloads/control
 we ensure we get a running instance on each node of the cluster.
 
 Docker logs host folder (`/var/lib/docker/containers`) is mounted on the Filebeat
-container. Filebeat will start a prospector for these files and start harvesting
+container. Filebeat will start an input for these files and start harvesting
 them as they appear.
 
 Everything is deployed under `kube-system` namespace, you can change that by
@@ -31,6 +31,13 @@ To get the manifests just run:
 ------------------------------------------------
 curl -L -O https://raw.githubusercontent.com/elastic/beats/{doc-branch}/deploy/kubernetes/filebeat-kubernetes.yaml
 ------------------------------------------------
+
+[WARNING]
+=======================================
+If you are using Kubernetes 1.7 or earlier: {beatname_uc} uses a hostPath volume to persist internal data, it's located
+under /var/lib/{beatname_lc}-data. The manifest uses folder autocreation (`DirectoryOrCreate`), which was introduced in
+Kubernetes 1.8. You will need to remove `type: DirectoryOrCreate` from the manifest and create the host folder yourself.
+=======================================
 
 [float]
 ==== Settings

@@ -32,11 +32,11 @@ This file is generated! See scripts/docs_collector.py
         os.mkdir(os.path.abspath("docs") + "/modules/" + module)
 
         module_file = generated_note
-        beat_path = path + "/" + module + "/_meta"
+        module_meta_path = path + "/" + module + "/_meta"
 
         # Load module fields.yml
         module_fields = ""
-        with open(beat_path + "/fields.yml") as f:
+        with open(module_meta_path + "/fields.yml") as f:
             module_fields = yaml.load(f.read())
             module_fields = module_fields[0]
 
@@ -53,9 +53,16 @@ This file is generated! See scripts/docs_collector.py
         with open(module_doc) as f:
             module_file += f.read()
 
-        modules_list[module] = title
+        modules_list[module] = {}
+        modules_list[module]["title"] = title
+        modules_list[module]["release"] = release
+        modules_list[module]["dashboards"] = os.path.exists(module_meta_path + "/kibana")
+        modules_list[module]["metricsets"] = {}
 
-        config_file = beat_path + "/config.yml"
+        config_file = module_meta_path + "/config.reference.yml"
+
+        if os.path.isfile(config_file) == False:
+            config_file = module_meta_path + "/config.yml"
 
         # Add example config file
         if os.path.isfile(config_file) == True:
@@ -80,6 +87,12 @@ in <<configuration-metricbeat>>. Here is an example configuration:
 
             module_file += "----\n\n"
 
+        # HTTP helper
+        if 'ssl' in get_settings(module_fields):
+            module_file += "This module supports TLS connection when using `ssl`" + \
+                           " config field, as described in <<configuration-ssl>>." + \
+                           " It also supports the options described in <<module-http-config-options>>.\n\n"
+
         # Add metricsets title as below each metricset adds its link
         module_file += "[float]\n"
         module_file += "=== Metricsets\n\n"
@@ -103,6 +116,10 @@ in <<configuration-metricbeat>>. Here is an example configuration:
             link = "<<" + link_name + "," + metricset + ">>"
             reference = "[[" + link_name + "]]"
 
+            modules_list[module]["metricsets"][metricset] = {}
+            modules_list[module]["metricsets"][metricset]["title"] = metricset
+            modules_list[module]["metricsets"][metricset]["link"] = link
+
             module_links += "* " + link + "\n\n"
 
             module_includes += "include::" + module + "/" + metricset + ".asciidoc[]\n\n"
@@ -119,12 +136,14 @@ in <<configuration-metricbeat>>. Here is an example configuration:
 
             # Read local fields.yml
             # create title out of module and metricset set name
-            # Add relase fag
+            # Add release fag
             metricset_file += "=== {} {} metricset\n\n".format(title, metricset)
 
             release = get_release(metricset_fields)
             if release != "ga":
                 metricset_file += "{}[]\n\n".format(get_release(metricset_fields))
+
+            modules_list[module]["metricsets"][metricset]["release"] = release
 
             metricset_file += 'include::../../../module/' + module + '/' + metricset + '/_meta/docs.asciidoc[]' + "\n"
 
@@ -162,12 +181,40 @@ For a description of each field in the metricset, see the
             f.write(module_file)
 
     module_list_output = generated_note
-    for m, title in sorted(six.iteritems(modules_list)):
-        module_list_output += "  * <<metricbeat-module-" + m + "," + title + ">>\n"
+
+    module_list_output += '[options="header"]\n'
+    module_list_output += '|===================================\n'
+    module_list_output += '|Modules   |Dashboards   |Metricsets   \n'
+
+    for key, m in sorted(six.iteritems(modules_list)):
+
+        release_label = ""
+        if m["release"] != "ga":
+            release_label = m["release"] + "[]"
+
+        dashboard_no = "image:./images/icon-no.png[No prebuilt dashboards] "
+        dashboard_yes = "image:./images/icon-yes.png[Prebuilt dashboards are available] "
+        dashboards = dashboard_yes if m["dashboards"] else dashboard_no
+
+        module_list_output += '|{} {}   |{}   |{}  \n'.format("<<metricbeat-module-" + key + "," + m["title"] + ">> ",
+                                                              release_label, dashboards, "")
+
+        # Make sure empty entry row spans over all metricset rows for this module
+        module_list_output += '.{}+| .{}+|  '.format(len(m["metricsets"]), len(m["metricsets"]))
+
+        for key, ms in sorted(six.iteritems(m["metricsets"])):
+
+            release_label = ""
+            if ms["release"] != "ga":
+                release_label = ms["release"] + "[]"
+
+            module_list_output += '|{} {}  \n'.format(ms["link"], release_label)
+
+    module_list_output += '|================================'
 
     module_list_output += "\n\n--\n\n"
-    for m, title in sorted(six.iteritems(modules_list)):
-        module_list_output += "include::modules/" + m + ".asciidoc[]\n"
+    for key, m in sorted(six.iteritems(modules_list)):
+        module_list_output += "include::modules/" + key + ".asciidoc[]\n"
 
     # Write module link list
     with open(os.path.abspath("docs") + "/modules_list.asciidoc", 'w') as f:
@@ -175,7 +222,6 @@ For a description of each field in the metricset, see the
 
 
 def get_release(fields):
-
     # Fetch release flag from fields. Default if not set is experimental
     release = "experimental"
     if "release" in fields:
@@ -184,6 +230,11 @@ def get_release(fields):
             raise Exception("Invalid release config: {}".format(release))
 
     return release
+
+
+def get_settings(fields):
+    # Get the list of common settings flags
+    return fields.get('settings', [])
 
 
 if __name__ == "__main__":

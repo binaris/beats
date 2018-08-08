@@ -1,6 +1,26 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package tls
 
 import (
+	"crypto/dsa"
+	"crypto/ecdsa"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
@@ -112,7 +132,7 @@ type helloMessage struct {
 		cipherSuite cipherSuite
 		compression compressionMethod
 	}
-	extensions common.MapStr
+	extensions Extensions
 }
 
 func readRecordHeader(buf *streambuf.Buffer) (*recordHeader, error) {
@@ -188,8 +208,8 @@ func (hello helloMessage) toMap() common.MapStr {
 		m["selected_compression_method"] = hello.selected.compression.String()
 	}
 
-	if hello.extensions != nil {
-		m["extensions"] = hello.extensions
+	if hello.extensions.Parsed != nil {
+		m["extensions"] = hello.extensions.Parsed
 	}
 	return m
 }
@@ -383,8 +403,8 @@ func parseCommonHello(buffer bufferView, dest *helloMessage) (int, bool) {
 }
 
 func (hello *helloMessage) parseExtensions(buffer bufferView) {
-	hello.extensions = parseExtensions(buffer)
-	if ticket, err := hello.extensions.GetValue("session_ticket"); err == nil {
+	hello.extensions = ParseExtensions(buffer)
+	if ticket, err := hello.extensions.Parsed.GetValue("session_ticket"); err == nil {
 		if value, ok := ticket.(string); ok {
 			hello.ticket.present = true
 			hello.ticket.value = value
@@ -413,7 +433,9 @@ func parseClientHello(buffer bufferView) *helloMessage {
 			logp.Warn("failed parsing client hello cipher suite")
 			return nil
 		}
-		result.supported.cipherSuites = append(result.supported.cipherSuites, cipherSuite(cipher))
+		if !isGreaseValue(cipher) {
+			result.supported.cipherSuites = append(result.supported.cipherSuites, cipherSuite(cipher))
+		}
 	}
 
 	pos += 2 + int(cipherSuitesLength)
@@ -483,7 +505,42 @@ func parseCertificates(buffer bufferView) []*x509.Certificate {
 }
 
 func (version tlsVersion) String() string {
-	return fmt.Sprintf("%d.%d", version.major, version.minor)
+	if version.major == 3 {
+		if version.minor > 0 {
+			return fmt.Sprintf("TLS 1.%d", version.minor-1)
+		}
+		return "SSL 3.0"
+	}
+	return fmt.Sprintf("(raw %d.%d)", version.major, version.minor)
+}
+
+func getKeySize(key interface{}) int {
+	if key == nil {
+		return 0
+	}
+	switch pubKey := key.(type) {
+	case *rsa.PublicKey:
+		if n := pubKey.N; n != nil {
+			return n.BitLen()
+		}
+
+	case *dsa.PublicKey:
+		if p := pubKey.Parameters.P; p != nil {
+			return p.BitLen()
+		}
+		if y := pubKey.Y; y != nil {
+			return y.BitLen()
+		}
+
+	case *ecdsa.PublicKey:
+		if params := pubKey.Params(); params != nil {
+			return params.BitSize
+		}
+		if y := pubKey.Y; y != nil {
+			return y.BitLen()
+		}
+	}
+	return 0
 }
 
 func certToMap(cert *x509.Certificate, includeRaw bool) common.MapStr {
@@ -496,6 +553,9 @@ func certToMap(cert *x509.Certificate, includeRaw bool) common.MapStr {
 		"subject":              toMap(&cert.Subject),
 		"not_before":           cert.NotBefore,
 		"not_after":            cert.NotAfter,
+	}
+	if keySize := getKeySize(cert.PublicKey); keySize > 0 {
+		certMap["public_key_size"] = keySize
 	}
 	san := make([]string, 0, len(cert.DNSNames)+len(cert.IPAddresses)+len(cert.EmailAddresses))
 	san = append(append(san, cert.DNSNames...), cert.EmailAddresses...)

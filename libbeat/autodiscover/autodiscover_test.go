@@ -1,4 +1,19 @@
-// +build integration
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 package autodiscover
 
@@ -7,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/cfgfile"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/common/bus"
@@ -41,6 +57,11 @@ func (m *mockRunner) Clone() *mockRunner {
 		stopped: m.stopped,
 	}
 }
+func (m *mockRunner) String() string {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	return "runner"
+}
 
 type mockAdapter struct {
 	mutex   sync.Mutex
@@ -58,7 +79,7 @@ func (m *mockAdapter) CheckConfig(*common.Config) error {
 	return nil
 }
 
-func (m *mockAdapter) Create(config *common.Config, meta *common.MapStrPointer) (cfgfile.Runner, error) {
+func (m *mockAdapter) Create(_ beat.Pipeline, config *common.Config, meta *common.MapStrPointer) (cfgfile.Runner, error) {
 	runner := &mockRunner{
 		config: config,
 		meta:   meta,
@@ -79,14 +100,8 @@ func (m *mockAdapter) Runners() []*mockRunner {
 	return res
 }
 
-// StartFilter returns the bus filter to retrieve runner start triggering events
-func (m *mockAdapter) StartFilter() []string {
-	return []string{"start"}
-}
-
-// StopFilter returns the bus filter to retrieve runner stop triggering events
-func (m *mockAdapter) StopFilter() []string {
-	return []string{"stop"}
+func (m *mockAdapter) EventFilter() []string {
+	return []string{"meta"}
 }
 
 type mockProvider struct{}
@@ -110,8 +125,8 @@ func TestNilAutodiscover(t *testing.T) {
 func TestAutodiscover(t *testing.T) {
 	// Register mock autodiscover provider
 	busChan := make(chan bus.Bus, 1)
-	ProviderRegistry = NewRegistry()
-	ProviderRegistry.AddProvider("mock", func(b bus.Bus, c *common.Config) (Provider, error) {
+	Registry = NewRegistry()
+	Registry.AddProvider("mock", func(b bus.Bus, c *common.Config) (Provider, error) {
 		// intercept bus to mock events
 		busChan <- b
 
@@ -135,7 +150,7 @@ func TestAutodiscover(t *testing.T) {
 	}
 
 	// Create autodiscover manager
-	autodiscover, err := NewAutodiscover("test", &adapter, &config)
+	autodiscover, err := NewAutodiscover("test", nil, &adapter, &config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +167,8 @@ func TestAutodiscover(t *testing.T) {
 			"foo": "bar",
 		},
 	})
-	time.Sleep(10 * time.Millisecond)
+	wait(t, func() bool { return len(adapter.Runners()) == 1 })
+
 	runners := adapter.Runners()
 	assert.Equal(t, len(runners), 1)
 	assert.Equal(t, runners[0].meta.Get()["foo"], "bar")
@@ -166,12 +182,35 @@ func TestAutodiscover(t *testing.T) {
 			"foo": "baz",
 		},
 	})
-	time.Sleep(10 * time.Millisecond)
+	wait(t, func() bool { return adapter.Runners()[0].meta.Get()["foo"] == "baz" })
+
 	runners = adapter.Runners()
 	assert.Equal(t, len(runners), 1)
 	assert.Equal(t, runners[0].meta.Get()["foo"], "baz") // meta is updated
 	assert.True(t, runners[0].started)
 	assert.False(t, runners[0].stopped)
+
+	// Test stop/start
+	eventBus.Publish(bus.Event{
+		"stop": true,
+		"meta": common.MapStr{
+			"foo": "baz",
+		},
+	})
+	eventBus.Publish(bus.Event{
+		"start": true,
+		"meta": common.MapStr{
+			"foo": "baz",
+		},
+	})
+	wait(t, func() bool { return len(adapter.Runners()) == 2 })
+
+	runners = adapter.Runners()
+	assert.Equal(t, len(runners), 2)
+	assert.True(t, runners[0].stopped)
+	assert.Equal(t, runners[1].meta.Get()["foo"], "baz")
+	assert.True(t, runners[1].started)
+	assert.False(t, runners[1].stopped)
 
 	// Test stop event
 	eventBus.Publish(bus.Event{
@@ -180,20 +219,21 @@ func TestAutodiscover(t *testing.T) {
 			"foo": "baz",
 		},
 	})
-	time.Sleep(10 * time.Millisecond)
+	wait(t, func() bool { return adapter.Runners()[1].stopped })
+
 	runners = adapter.Runners()
-	assert.Equal(t, len(runners), 1)
-	assert.Equal(t, runners[0].meta.Get()["foo"], "baz")
-	assert.True(t, runners[0].started)
-	assert.True(t, runners[0].stopped)
+	assert.Equal(t, len(runners), 2)
+	assert.Equal(t, runners[1].meta.Get()["foo"], "baz")
+	assert.True(t, runners[1].started)
+	assert.True(t, runners[1].stopped)
 }
 
 func TestAutodiscoverHash(t *testing.T) {
 	// Register mock autodiscover provider
 	busChan := make(chan bus.Bus, 1)
 
-	ProviderRegistry = NewRegistry()
-	ProviderRegistry.AddProvider("mock", func(b bus.Bus, c *common.Config) (Provider, error) {
+	Registry = NewRegistry()
+	Registry.AddProvider("mock", func(b bus.Bus, c *common.Config) (Provider, error) {
 		// intercept bus to mock events
 		busChan <- b
 
@@ -220,7 +260,7 @@ func TestAutodiscoverHash(t *testing.T) {
 	}
 
 	// Create autodiscover manager
-	autodiscover, err := NewAutodiscover("test", &adapter, &config)
+	autodiscover, err := NewAutodiscover("test", nil, &adapter, &config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +277,8 @@ func TestAutodiscoverHash(t *testing.T) {
 			"foo": "bar",
 		},
 	})
-	time.Sleep(10 * time.Millisecond)
+	wait(t, func() bool { return len(adapter.Runners()) == 2 })
+
 	runners := adapter.Runners()
 	assert.Equal(t, len(runners), 2)
 	assert.Equal(t, runners[0].meta.Get()["foo"], "bar")
@@ -246,4 +287,18 @@ func TestAutodiscoverHash(t *testing.T) {
 	assert.Equal(t, runners[1].meta.Get()["foo"], "bar")
 	assert.True(t, runners[1].started)
 	assert.False(t, runners[1].stopped)
+}
+
+func wait(t *testing.T, test func() bool) {
+	sleep := 20 * time.Millisecond
+	ready := test()
+	for !ready && sleep < 10*time.Second {
+		time.Sleep(sleep)
+		sleep = sleep + 1*time.Second
+		ready = test()
+	}
+
+	if !ready {
+		t.Fatal("Waiting for condition")
+	}
 }
